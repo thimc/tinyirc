@@ -24,8 +24,10 @@ Installation
 
 The following flags are supported:
 
+- `P` sets the command prefix. Default is `/`
 - `h` sets the IRC Host. Default is `irc.libera.chat`
+- `k` sets the user password.
+- `n` sets the user nickname. Defaults is the `$USER` variable
 - `p` sets the IRC Port. Defaults to `6667`
-- `n` sets the user nickname. Defaults to the `$USER` variable
-- `p` sets the user password
-- `P` sets the command prefix, defaults to `/`
+- `s` enables SASL. Default is off.
+- `t` enables TLS. Default is off.
