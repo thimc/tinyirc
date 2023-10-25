@@ -1,0 +1,73 @@
+.TH TINYIRC 1
+.SH NAME
+tinyirc \- tiny and simple irc client
+.SH SYNOPSIS
+.B sic
+.RB [ \-P
+.IR prefix ]
+.RB [ \-h
+.IR host ]
+.RB [ \-k
+.IR password ]
+.RB [ \-n
+.IR nick ]
+.RB [ \-p
+.IR port ]
+.RB [ \-s ]
+.RB [ \-t ]
+.SH DESCRIPTION
+.B tinyirc
+is an extremely fast, small and simple irc client written in go. It reads
+commands from standard input and prints all server output to standard output.
+tinyirc aims to be 100 % compatible with sic and expands on ideas from it.
+.SH OPTIONS
+.TP
+.BI \-P " prefix"
+Overrides the default command prefix (/)
+.TP
+.BI \-h " host"
+Overrides the default host (irc.libera.chat)
+.TP
+.BI \-k " password"
+Specifies the user password
+.TP
+.BI \-n " nick"
+Override the default nick ($USER)
+.TP
+.BI \-p " port"
+Override the default port (6667)
+.TP
+.B \-s
+Enables SASL which is an authentication method used by many IRC networks.
+.TP
+.B \-t
+Enables TLS, this is normally used in conjuction with SASL but can be used
+independately for extra security.
+.SH BUILTIN COMMANDS
+.TP
+.BI /j " #channel"
+Join a channel
+.TP
+.BI /l " #channel message"
+Send 
+.B message
+and part from a channel 
+.TP
+.BI /m " #channel/user message"
+Send a message to channel or user
+.TP
+.BI /s " #channel/user"
+Set default channel or user
+.TP
+.BI /q
+Leaves a channel
+.TP
+.BI / command
+Any line beginning with
+.B /
+is sent as a command
+.SH SEE ALSO
+.TP
+sic(1)
+.SH BUGS
+Probably.
