@@ -51,7 +51,6 @@ func newConnection(nick, pass, host string, port int) (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-
 	} else {
 		dial, err = net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), timeout)
 		if err != nil {
@@ -74,10 +73,10 @@ func newConnection(nick, pass, host string, port int) (net.Conn, error) {
 	if err := sendCommand(dial, fmt.Sprintf("NICK %s", nick)); err != nil {
 		return nil, err
 	}
-
 	if err := sendCommand(dial, fmt.Sprintf("USER %s localhost %s :%s", nick, host, nick)); err != nil {
 		return nil, err
 	}
+
 	return dial, nil
 }
 
@@ -90,6 +89,7 @@ func sendCommand(conn net.Conn, message string) error {
 	if bytesWrote != len(msgFormatted) {
 		return fmt.Errorf("Unexpected error, could not write the whole message")
 	}
+
 	return nil
 }
 
@@ -252,10 +252,13 @@ func main() {
 				if channelName == "" {
 					continue
 				}
+				// TODO: get message from user and send it before parting
 				sendCommand(conn, fmt.Sprintf("PART %s :%s", channelName, partingMessage))
 			case 'm':
 				line := strings.Fields(input[2:])
 				privateMessage(conn, line[1], strings.Join(line[2:], " "))
+			case 's':
+				// TODO: Set default channel/user
 			case 'q':
 				sendCommand(conn, "QUIT")
 			default:
