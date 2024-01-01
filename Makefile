@@ -1,10 +1,11 @@
 NAME = tinyirc
 PREFIX = /usr/local
 VERSION = 0.1.0
-BUILD_TIME = $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+BUILD_TIME = `date -u '+%Y-%m-%dT%H:%M:%SZ'`
 
 ${NAME}:
-	go build -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)" -o ${NAME} main.go
+	go build -o $(NAME) -ldflags \
+		"-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)" main.go
 
 clean:
 	rm -f ${NAME}
