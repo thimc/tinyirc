@@ -1,6 +1,6 @@
 NAME = tinyirc
 PREFIX = /usr/local
-VERSION = 0.1.0
+VERSION = 0.1.1
 BUILD_TIME = `date -u '+%Y-%m-%dT%H:%M:%SZ'`
 
 ${NAME}:
