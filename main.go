@@ -72,14 +72,14 @@ func newConnection(nick, pass, host string, port int) (net.Conn, error) {
 	return dial, sendCommand(dial, fmt.Sprintf("USER %s localhost %s :%s", nick, host, nick))
 }
 
-func sendCommand(conn net.Conn, message string) error {
-	n := fmt.Sprintf("%s\r\n", message)
+func sendCommand(conn net.Conn, msg string) error {
+	n := fmt.Sprintf("%s\r\n", msg)
 	nw, err := conn.Write([]byte(n))
 	if err != nil {
 		return err
 	}
 	if nw != len(n) {
-		return fmt.Errorf("Error: could not write the whole message: %q", n)
+		return fmt.Errorf("could not write the whole msg: %q", n)
 	}
 	return nil
 }
@@ -99,7 +99,7 @@ func parseInput(conn net.Conn, input string) error {
 		if channelName == "" {
 			return nil
 		}
-		// TODO: get message from user and send it before parting
+		// TODO: get msg from user and send it before parting
 		return sendCommand(conn, fmt.Sprintf("PART %s :%s", channelName, partingMessage))
 	case 'm':
 		line := strings.Fields(input[2:])
@@ -114,11 +114,11 @@ func parseInput(conn net.Conn, input string) error {
 	return nil
 }
 
-func parseMessage(conn net.Conn, message string) error {
+func parseMessage(conn net.Conn, msg string) error {
 	var (
-		parts    = strings.SplitN(message, " :", 2)
-		header   = parts[0]
-		command  string
+		parts    = strings.SplitN(msg, " :", 2)
+		hdr      = parts[0]
+		cmd      string
 		params   string
 		trailing string
 	)
@@ -126,14 +126,14 @@ func parseMessage(conn net.Conn, message string) error {
 		trailing = parts[1]
 	}
 
-	if strings.HasPrefix(header, ":") {
-		spaceIndex := strings.Index(header, " ")
-		prefix = header[1:spaceIndex]
-		header = header[spaceIndex+1:]
+	if strings.HasPrefix(hdr, ":") {
+		spaceIndex := strings.Index(hdr, " ")
+		prefix = hdr[1:spaceIndex]
+		hdr = hdr[spaceIndex+1:]
 	}
-	fields := strings.Fields(header)
+	fields := strings.Fields(hdr)
 	if len(fields) > 0 {
-		command = fields[0]
+		cmd = fields[0]
 	}
 	if len(fields) > 1 {
 		params = fields[1]
@@ -142,14 +142,13 @@ func parseMessage(conn net.Conn, message string) error {
 		index := strings.Index(prefix, "!")
 		prefix = prefix[:index]
 	}
-	switch command {
-	//	case "PONG": /* PING feedback */
+	switch cmd {
 	case "PING":
 		return sendCommand(conn, fmt.Sprintf("PONG :%s", trailing))
 	case "PRIVMSG":
 		printMessage(params, "<%s> %s", prefix, trailing)
 	case "CAP":
-		for _, p := range strings.Split(message, " ") {
+		for _, p := range strings.Split(msg, " ") {
 			if p == "sasl" {
 				return sendCommand(conn, fmt.Sprintf("CAP REQ :%s", p))
 			} else if p == "ACK" || p == "NAK" {
@@ -157,28 +156,23 @@ func parseMessage(conn net.Conn, message string) error {
 			}
 		}
 	case "AUTHENTICATE":
-		printMessage(prefix, ">< %s (%s): %s", command, *nick, saslMech)
+		printMessage(prefix, ">< %s (%s): %s", cmd, *nick, saslMech)
 		str := []byte(fmt.Sprintf("%s\x00%s\x00%s", *nick, *nick, *pass))
 		return sendCommand(conn, fmt.Sprintf("AUTHENTICATE %s", base64.StdEncoding.EncodeToString(str)))
 	case "005": /* IS SUPPORT */
-		/* TODO: The issue we have this is because parseMessage splits on " :" */
-		printMessage(prefix, ">< %s (%s): %s", command, *nick, strings.Join(fields[2:], " "))
+		printMessage(prefix, ">< %s (%s): %s", cmd, *nick, strings.Join(fields[2:], " "))
 	case "252": /* */
 		fallthrough
 	case "253": /* */
 		fallthrough
 	case "254": /* */
-		printMessage(prefix, ">< %s (%s): %s", command, *nick, fields[2]+" "+trailing)
-		//	case "900": /* TODO: LOGGED IN */
-		//	case "901": /* TODO: LOGGED OUT */
-		//	case "902": /* TODO: NICK LOCKED */
-		//	case "900": /* TODO: LOGGED IN */
+		printMessage(prefix, ">< %s (%s): %s", cmd, *nick, fields[2]+" "+trailing)
 	case "903": /* SASL SUCCESS */
 		return sendCommand(conn, "CAP END")
 	case "904": /* SASL FAIL */
-		printMessage(prefix, ">< %s (%s): %s", command, *nick, "SASL: failed")
+		printMessage(prefix, ">< %s (%s): %s", cmd, *nick, "SASL: failed")
 		fallthrough
-	case "905": /* SASL FAIL - TOO LONG (message exceeds 400 bytes) */
+	case "905": /* SASL FAIL - TOO LONG (msg exceeds 400 bytes) */
 		fallthrough
 	case "906": /* SASL ABORTED (client side) */
 		if err := sendCommand(conn, "CAP END"); err != nil {
@@ -188,20 +182,18 @@ func parseMessage(conn net.Conn, message string) error {
 			return err
 		}
 		os.Exit(1)
-		//	case "907": /* TODO: SASL ALREADY (already authenticated) */
-		//	case "907": /* TODO: SASL MECHS (request mechanism for SASL authentication) */
 	default:
-		printMessage(prefix, ">< %s (%s): %s", command, params, trailing)
+		printMessage(prefix, ">< %s (%s): %s", cmd, params, trailing)
 	}
 	return nil
 }
 
-func privateMessage(conn net.Conn, channel, message string) error {
+func privateMessage(conn net.Conn, channel, msg string) error {
 	if channel == "" {
-		return fmt.Errorf("Error: No channel to send to")
+		return fmt.Errorf("no channel to send to")
 	}
-	printMessage(channel, "<%s> %s", *nick, message)
-	return sendCommand(conn, fmt.Sprintf("PRIVMSG %s :%s", channel, message))
+	printMessage(channel, "<%s> %s", *nick, msg)
+	return sendCommand(conn, fmt.Sprintf("PRIVMSG %s :%s", channel, msg))
 }
 
 func makeReader(r io.Reader, ch chan<- string) {
@@ -216,17 +208,17 @@ func makeReader(r io.Reader, ch chan<- string) {
 }
 
 func printMessage(channel string, format string, a ...any) {
-	fmt.Printf("%-19s: %s %s\n", channel, time.Now().Format(timeFormat), fmt.Sprintf(format, a...))
+	fmt.Printf("%-20s: %s %s\n", channel, time.Now().Format(timeFormat), fmt.Sprintf(format, a...))
 }
 
 func main() {
 	flag.Parse()
 	if *nick == "" {
-		fmt.Fprintf(os.Stderr, "Error: nickname cannot be empty\n")
+		fmt.Fprintf(os.Stderr, "nickname cannot be empty")
 		os.Exit(1)
 	}
 	if len(*prompt) != 1 {
-		fmt.Fprintf(os.Stderr, "Error: the command prefix should only be one character.\n")
+		fmt.Fprintf(os.Stderr, "command prefix should only be one character")
 		os.Exit(1)
 	}
 	conn, err := newConnection(*nick, *pass, *host, *port)
@@ -242,11 +234,11 @@ func main() {
 		select {
 		case input := <-inputch:
 			if err := parseInput(conn, input); err != nil {
-				log.Printf("%s\n", err)
+				printMessage("Error", err.Error())
 			}
 		case output := <-outputch:
 			if err := parseMessage(conn, output); err != nil {
-				log.Printf("%s\n", err)
+				printMessage("Error", err.Error())
 			}
 		}
 	}
