@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -17,11 +18,13 @@ const (
 	timeFormat     = "2006-01-02 15:04"
 	partingMessage = "No rest for the wicked"
 	saslMech       = "PLAIN"
+	portDefault    = 6667
+	portTLS        = 6697
 )
 
 var (
 	host    = flag.String("h", "irc.libera.chat", "host")
-	port    = flag.Int("p", 6667, "port")
+	port    = flag.Int("p", portDefault, "port")
 	nick    = flag.String("n", os.Getenv("USER"), "nickname")
 	pass    = flag.String("k", "", "password")
 	prompt  = flag.String("P", "/", "command prefix")
@@ -40,12 +43,9 @@ func newConnection(nick, pass, host string, port int) (net.Conn, error) {
 		tlsConf = &tls.Config{InsecureSkipVerify: true}
 		dialer  = &net.Dialer{Timeout: timeout}
 	)
-
-	// TODO: Get rid of magic numbers
-	if *usetls && port == 6667 {
-		port = 6697
+	if *usetls && port == portDefault {
+		port = portTLS
 	}
-
 	if *usetls {
 		dial, err = tls.DialWithDialer(dialer, "tcp", fmt.Sprintf("%s:%d", host, port), tlsConf)
 		if err != nil {
@@ -57,43 +57,64 @@ func newConnection(nick, pass, host string, port int) (net.Conn, error) {
 			return nil, err
 		}
 	}
-
 	if *usesasl {
 		if err := sendCommand(dial, "CAP LS"); err != nil {
 			return nil, err
 		}
-	} else {
-		if pass != "" {
-			if err := sendCommand(dial, fmt.Sprintf("PASS %s", pass)); err != nil {
-				return nil, err
-			}
+	} else if pass != "" {
+		if err := sendCommand(dial, fmt.Sprintf("PASS %s", pass)); err != nil {
+			return nil, err
 		}
 	}
-
 	if err := sendCommand(dial, fmt.Sprintf("NICK %s", nick)); err != nil {
 		return nil, err
 	}
-	if err := sendCommand(dial, fmt.Sprintf("USER %s localhost %s :%s", nick, host, nick)); err != nil {
-		return nil, err
-	}
-
-	return dial, nil
+	return dial, sendCommand(dial, fmt.Sprintf("USER %s localhost %s :%s", nick, host, nick))
 }
 
 func sendCommand(conn net.Conn, message string) error {
-	msgFormatted := fmt.Sprintf("%s\r\n", message)
-	bytesWrote, err := conn.Write([]byte(msgFormatted))
+	n := fmt.Sprintf("%s\r\n", message)
+	nw, err := conn.Write([]byte(n))
 	if err != nil {
 		return err
 	}
-	if bytesWrote != len(msgFormatted) {
-		return fmt.Errorf("Unexpected error, could not write the whole message")
+	if nw != len(n) {
+		return fmt.Errorf("Error: could not write the whole message: %q", n)
 	}
-
 	return nil
 }
 
-func parseIRCMessage(conn net.Conn, message string) {
+func parseInput(conn net.Conn, input string) error {
+	if len(input) < 2 {
+		return nil
+	}
+	if input[0] != []byte(*prompt)[0] {
+		return privateMessage(conn, channelName, input)
+	}
+	switch input[1] {
+	case 'j':
+		channelName = strings.Fields(input)[1]
+		return sendCommand(conn, fmt.Sprintf("JOIN %s", channelName))
+	case 'l':
+		if channelName == "" {
+			return nil
+		}
+		// TODO: get message from user and send it before parting
+		return sendCommand(conn, fmt.Sprintf("PART %s :%s", channelName, partingMessage))
+	case 'm':
+		line := strings.Fields(input[2:])
+		return privateMessage(conn, line[1], strings.Join(line[2:], " "))
+	case 's':
+		// TODO: Set default channel/user
+	case 'q':
+		return sendCommand(conn, "QUIT")
+	default:
+		return sendCommand(conn, input[1:])
+	}
+	return nil
+}
+
+func parseMessage(conn net.Conn, message string) error {
 	var (
 		parts    = strings.SplitN(message, " :", 2)
 		header   = parts[0]
@@ -110,7 +131,6 @@ func parseIRCMessage(conn net.Conn, message string) {
 		prefix = header[1:spaceIndex]
 		header = header[spaceIndex+1:]
 	}
-
 	fields := strings.Fields(header)
 	if len(fields) > 0 {
 		command = fields[0]
@@ -118,32 +138,30 @@ func parseIRCMessage(conn net.Conn, message string) {
 	if len(fields) > 1 {
 		params = fields[1]
 	}
-
 	if strings.Contains(prefix, "!") {
 		index := strings.Index(prefix, "!")
 		prefix = prefix[:index]
 	}
-
 	switch command {
 	//	case "PONG": /* PING feedback */
 	case "PING":
-		sendCommand(conn, fmt.Sprintf("PONG :%s", trailing))
+		return sendCommand(conn, fmt.Sprintf("PONG :%s", trailing))
 	case "PRIVMSG":
 		printMessage(params, "<%s> %s", prefix, trailing)
 	case "CAP":
 		for _, p := range strings.Split(message, " ") {
 			if p == "sasl" {
-				sendCommand(conn, fmt.Sprintf("CAP REQ :%s", p))
+				return sendCommand(conn, fmt.Sprintf("CAP REQ :%s", p))
 			} else if p == "ACK" || p == "NAK" {
-				sendCommand(conn, fmt.Sprintf("AUTHENTICATE %s", saslMech))
+				return sendCommand(conn, fmt.Sprintf("AUTHENTICATE %s", saslMech))
 			}
 		}
 	case "AUTHENTICATE":
 		printMessage(prefix, ">< %s (%s): %s", command, *nick, saslMech)
 		str := []byte(fmt.Sprintf("%s\x00%s\x00%s", *nick, *nick, *pass))
-		sendCommand(conn, fmt.Sprintf("AUTHENTICATE %s", base64.StdEncoding.EncodeToString(str)))
+		return sendCommand(conn, fmt.Sprintf("AUTHENTICATE %s", base64.StdEncoding.EncodeToString(str)))
 	case "005": /* IS SUPPORT */
-		/* TODO: The issue we have this is because parseIRCMessage splits on " :" */
+		/* TODO: The issue we have this is because parseMessage splits on " :" */
 		printMessage(prefix, ">< %s (%s): %s", command, *nick, strings.Join(fields[2:], " "))
 	case "252": /* */
 		fallthrough
@@ -156,53 +174,45 @@ func parseIRCMessage(conn net.Conn, message string) {
 		//	case "902": /* TODO: NICK LOCKED */
 		//	case "900": /* TODO: LOGGED IN */
 	case "903": /* SASL SUCCESS */
-		sendCommand(conn, "CAP END")
+		return sendCommand(conn, "CAP END")
 	case "904": /* SASL FAIL */
 		printMessage(prefix, ">< %s (%s): %s", command, *nick, "SASL: failed")
 		fallthrough
 	case "905": /* SASL FAIL - TOO LONG (message exceeds 400 bytes) */
 		fallthrough
 	case "906": /* SASL ABORTED (client side) */
-		sendCommand(conn, "CAP END")
-		sendCommand(conn, "QUIT")
+		if err := sendCommand(conn, "CAP END"); err != nil {
+			return err
+		}
+		if err := sendCommand(conn, "QUIT"); err != nil {
+			return err
+		}
 		os.Exit(1)
 		//	case "907": /* TODO: SASL ALREADY (already authenticated) */
 		//	case "907": /* TODO: SASL MECHS (request mechanism for SASL authentication) */
 	default:
 		printMessage(prefix, ">< %s (%s): %s", command, params, trailing)
-		//		log.Printf("\033[1;31m%s\033[0m\n", message)
 	}
+	return nil
 }
 
-func makeInputReader(inputch chan<- string) {
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			log.Fatal(err)
-		}
-		inputch <- strings.TrimSpace(input)
-	}
-}
-
-func makeOutputReader(conn net.Conn, outputch chan<- string) {
-	reader := bufio.NewReader(conn)
-	for {
-		output, err := reader.ReadString('\n')
-		if err != nil {
-			log.Fatal(err)
-		}
-		outputch <- strings.TrimSpace(output)
-	}
-}
-
-func privateMessage(conn net.Conn, channel, message string) {
+func privateMessage(conn net.Conn, channel, message string) error {
 	if channel == "" {
-		printMessage("Error", "No channel to send to")
-		return
+		return fmt.Errorf("Error: No channel to send to")
 	}
 	printMessage(channel, "<%s> %s", *nick, message)
-	sendCommand(conn, fmt.Sprintf("PRIVMSG %s :%s", channel, message))
+	return sendCommand(conn, fmt.Sprintf("PRIVMSG %s :%s", channel, message))
+}
+
+func makeReader(r io.Reader, ch chan<- string) {
+	br := bufio.NewReader(r)
+	for {
+		ln, err := br.ReadString('\n')
+		if err != nil {
+			log.Fatal(err)
+		}
+		ch <- strings.TrimSpace(ln)
+	}
 }
 
 func printMessage(channel string, format string, a ...any) {
@@ -211,61 +221,33 @@ func printMessage(channel string, format string, a ...any) {
 
 func main() {
 	flag.Parse()
-
 	if *nick == "" {
-		fmt.Printf("Error: nickname cannot be empty\n")
+		fmt.Fprintf(os.Stderr, "Error: nickname cannot be empty\n")
 		os.Exit(1)
 	}
-	if len(*prompt) > 1 {
-		fmt.Printf("Error: the command prefix should only be one character.\n")
+	if len(*prompt) != 1 {
+		fmt.Fprintf(os.Stderr, "Error: the command prefix should only be one character.\n")
 		os.Exit(1)
 	}
-
 	conn, err := newConnection(*nick, *pass, *host, *port)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conn.Close()
-
 	inputch := make(chan string)
 	outputch := make(chan string)
-
-	go makeInputReader(inputch)
-	go makeOutputReader(conn, outputch)
-
+	go makeReader(os.Stdin, inputch)
+	go makeReader(conn, outputch)
 	for {
 		select {
 		case input := <-inputch:
-			if len(input) < 2 {
-				continue
-			}
-			if input[0] != []byte(*prompt)[0] {
-				privateMessage(conn, channelName, input)
-				continue
-			}
-
-			switch input[1] {
-			case 'j':
-				channelName = strings.Fields(input)[1]
-				sendCommand(conn, fmt.Sprintf("JOIN %s", channelName))
-			case 'l':
-				if channelName == "" {
-					continue
-				}
-				// TODO: get message from user and send it before parting
-				sendCommand(conn, fmt.Sprintf("PART %s :%s", channelName, partingMessage))
-			case 'm':
-				line := strings.Fields(input[2:])
-				privateMessage(conn, line[1], strings.Join(line[2:], " "))
-			case 's':
-				// TODO: Set default channel/user
-			case 'q':
-				sendCommand(conn, "QUIT")
-			default:
-				sendCommand(conn, input[1:])
+			if err := parseInput(conn, input); err != nil {
+				log.Printf("%s\n", err)
 			}
 		case output := <-outputch:
-			parseIRCMessage(conn, output)
+			if err := parseMessage(conn, output); err != nil {
+				log.Printf("%s\n", err)
+			}
 		}
 	}
 }
